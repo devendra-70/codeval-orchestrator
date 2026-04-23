@@ -1,0 +1,214 @@
+ SOFTWARE REQUIREMENTS SPECIFICATION (SRS)
+1. Introduction
+1.1 Purpose
+
+This document defines the functional and system requirements of the AI Services Module within the CodEval platform.
+
+The module enables administrators to generate, validate, and manage coding questions using an AI-driven pipeline.
+
+1.2 Scope
+
+The AI Services Module is responsible for:
+
+Generating coding questions based on provided attributes
+Producing valid and executable sample code
+Generating and validating test cases
+Validating the quality and correctness of questions
+Providing an editor interface for review, modification, and publishing
+1.3 System Overview
+
+The system operates as a multi-model AI pipeline consisting of:
+
+AI Model 1 → Question Generator
+AI Model 2 → Test Case Generator
+AI Model 3 → Question Validator
+Execution Behavior
+Model 1 executes first (for AI-based generation flow)
+Model 2 and Model 3 execute in parallel
+The system aggregates outputs before displaying results
+2. Overall System Description
+2.1 User Roles
+Admin
+
+The Admin is responsible for:
+
+Providing inputs for question generation
+Reviewing generated outputs
+Editing generated content
+Publishing or discarding questions
+2.2 System Capabilities
+
+The system must support:
+
+AI-based question generation using configurable attributes
+Manual/custom question input
+Automated test case generation and validation
+Question validation with confidence scoring
+Editor interface for review and publishing
+Retry, fallback, and failover mechanisms
+3. Functional Requirements
+3.1 Question Generation Flow
+3.1.1 Flow 1 — AI-Based Question Generation
+Description
+
+The Admin provides attributes to generate a coding question using AI.
+
+Inputs
+Topic
+Sub-topic
+Difficulty level
+Custom input (optional)
+Number of test cases
+Processing
+The system injects input attributes into a prompt template
+The system invokes AI Model 1
+AI Model 1 generates:
+Problem statement
+Sample solution code
+Initial test cases
+Output
+Generated question package is passed to:
+AI Model 2 (test case generation)
+AI Model 3 (validation)
+Constraints
+All required attributes must be provided before generation
+Difficulty level must be preserved in output
+Generated code must be syntactically valid
+3.1.2 Flow 2 — Custom Question Input
+Description
+
+The Admin manually provides a problem statement and solution code.
+
+Inputs
+Problem statement
+Sample solution code
+Processing
+AI Model 1 is skipped
+The system directly invokes AI Model 2
+AI Model 2 generates test cases
+Output
+Generated test cases and input data are sent to the editor interface
+Constraints
+Provided solution code must be executable
+Test cases must align with the provided problem statement
+4. AI Pipeline Architecture
+4.1 Model Execution Flow
+Step 1
+AI Model 1 executes for AI-based generation flow only
+Step 2 (Parallel Execution)
+AI Model 2 generates test cases
+AI Model 3 validates the generated question
+4.2 Parallel Execution Rules
+Model 2 and Model 3 must execute simultaneously
+The system must wait for both outputs before proceeding
+If either model fails or times out, fallback logic must be triggered
+5. AI Model Functional Requirements
+5.1 AI Model 1 — Question Generator
+Input
+Topic
+Sub-topic
+Difficulty
+Custom input
+Test case count
+Output
+Problem statement
+Sample solution code
+Sample test cases
+Constraints
+Must follow predefined prompt template
+Must preserve difficulty level
+Must generate logically correct and executable code
+5.2 AI Model 2 — Test Case Generator
+Input
+Problem statement
+Sample code
+Initial test cases (optional)
+Output
+Visible sample test cases
+Hidden edge test cases
+Validation Rules
+All test cases must pass execution against sample code
+Invalid test cases must be discarded
+Edge cases must cover boundary conditions where applicable
+5.3 AI Model 3 — Question Validator
+Input
+Original input attributes
+Generated problem statement
+Sample solution code
+Output
+Validation status (Pass / Fail)
+Confidence score
+Validation Criteria
+Topic alignment
+Difficulty correctness
+Logical correctness
+Code correctness
+6. Prompt Engine
+6.1 Components
+System Prompt
+
+Defines:
+
+AI role
+Output structure
+Constraints
+Few-shot Examples
+Provide examples for consistent output generation
+Attribute Injection
+Admin inputs must be dynamically injected into prompts
+Constraint Rules
+Prompt must enforce output structure
+Prompt must prevent invalid or incomplete responses
+7. Fallback and Retry Mechanism
+7.1 Model 2 Fallback (Test Case Generator)
+Layer 1 — Validation
+Validate generated test cases
+Layer 2 — Prompt Refinement
+Retry generation using failure reason
+Layer 3 — Retry
+Retry once
+Layer 4 — Model Failover
+Switch to alternate model
+Layer 5 — Admin Escalation
+Return partial result to Admin
+7.2 Model 3 Fallback (Question Validator)
+Layer 0 — Rule-Based Pre-Check
+Question must not be empty
+Topic must match input
+Code must compile successfully
+Rule
+If any pre-check fails, validation must stop immediately
+Layer 1 — AI Validation
+Perform semantic validation
+Layer 2 — Model Failover
+Retry with alternate model
+Layer 3 — Soft Warning
+Allow Admin override in case of uncertainty
+8. Parallel Processing
+Rules
+Model 2 and Model 3 must run concurrently
+The system must wait for both outputs
+Timeout must trigger fallback mechanism
+9. Editor Interface
+Responsibilities
+
+The system must provide an editor interface where the Admin can:
+
+View generated question
+View test cases
+View validation results
+Edit content
+Regenerate outputs
+Publish or discard the question
+Constraints
+Only validated questions should be publishable
+Admin must have the ability to override validation warnings
+10. Non-Functional Requirements
+Performance
+Parallel execution must minimize response time
+Reliability
+Multi-layer fallback must prevent total failure
+Scalability
+System must support multiple AI models
+Usability
+Interface must be simple and intuitive for Admin users
