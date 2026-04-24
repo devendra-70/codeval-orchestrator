@@ -64,11 +64,15 @@ Stage 0: Build Ticket Context
          │
          ▼
 Stage 1: Architecture
-  → Architecture Design Agent (/ticket-architect → /approve)
-  → Output: tickets/{id}/architecture/architecture-decision.md
+  → Architecture Design Agent (/ticket-architect only)
+  → [Draft produced, returned to orchestrator]
          │
     [CHECKPOINT A — human: APPROVE / REJECT / REVISE]
-         │ APPROVE
+         │ APPROVE only
+         ▼
+  → Architecture Design Agent (/approve)
+  → Output file created: tickets/{id}/architecture/architecture-decision.md
+         │
          ▼
 Stage 2: Backend Implementation
   → Backend Implementation Agent (/audit → /generate → /approve)
