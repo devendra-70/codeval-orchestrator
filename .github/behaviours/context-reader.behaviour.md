@@ -1,5 +1,9 @@
 # Behaviour: Context Reader
 
+## When This Behaviour Runs
+After config-reader.behaviour.md loads the config, and before any other action.
+All paths below are resolved from agent-config.yml keys — not hardcoded.
+
 ## Purpose
 Every agent in the pipeline MUST read a defined set of context sources before
 beginning any analysis, design, generation, or modification work.
@@ -19,9 +23,8 @@ hasn't run), note it as "not yet available" and proceed — do not halt.
 
 ### 1. Project-Wide Standards (always read first)
 
-```
-.github/requirements/**
-```
+{github.requirements}/**
+
 Read ALL files in this folder.
 These define the non-negotiable project rules every agent must abide by.
 If any planned action conflicts with these requirements, the agent MUST flag
@@ -29,33 +32,29 @@ the conflict before proceeding.
 
 ### 2. Global Architecture (always read second)
 
-```
-.github/agents/architecture-agent.agent.md   (to understand the architecture output schema)
-/documentation/architecture_document/**       (global architecture documents)
-```
+{github.agents}/architecture-agent.agent.md   (to understand the architecture output schema)
+{architecture.global_docs}/**       (global architecture documents)
+
 Read the most recent version of the global architecture document.
 Understand the overall system design before making any ticket-scoped decisions.
 
 ### 3. Ticket Context (always read third)
 
-```
-tickets/{TICKET_ID}/ticket-context.md
-```
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.context_file}
+
 This file is created by the Orchestrator at the start of every ticket run.
 It contains: ticket title, description, acceptance criteria, linked epic, related tickets.
 
 If this file does NOT exist:
-```
-CONTEXT ERROR: tickets/{TICKET_ID}/ticket-context.md not found.
+CONTEXT ERROR: {tickets.root}/{TICKET_ID}/{tickets.subfolders.context_file} not found.
 Cannot proceed without ticket context. Reporting to orchestrator.
-```
+
 Halt and report. Do not proceed.
 
 ### 4. Ticket-Scoped Architecture (read fourth, if exists)
 
-```
-tickets/{TICKET_ID}/architecture/architecture-decision.md
-```
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.architecture}/{tickets.artifacts.architecture_decision}
+
 Read if it exists. This is the architecture the Architecture Agent produced
 specifically for this ticket. All implementation decisions must align with it.
 
@@ -63,14 +62,14 @@ specifically for this ticket. All implementation decisions must align with it.
 
 Each agent reads the prior-stage outputs relevant to its work:
 
-| Agent                        | Additional Context to Read                                               |
+| Agent                        | Additional Context to Read                                               |
 |------------------------------|--------------------------------------------------------------------------|
-| Architecture Agent           | (none — produces the first artifact)                                     |
-| Backend Implementation Agent | `tickets/{id}/architecture/architecture-decision.md`                     |
-| Unit Test Agent              | `tickets/{id}/implementation/files-changed.md` + `implementation-notes.md` |
-| Code Review Agent            | `tickets/{id}/implementation/files-changed.md` + `test-reports/run-{N}-report.md` |
-| Bugfix Agent                 | `tickets/{id}/test-reports/run-{N}-report.md` + `review-reports/run-{N}-review.md` |
-| Orchestrator                 | All of the above                                                         |
+| Architecture Agent           | (none — produces the first artifact)                                     |
+| Backend Implementation Agent | `{tickets.root}/{id}/{tickets.subfolders.architecture}/{tickets.artifacts.architecture_decision}` |
+| Unit Test Agent              | `{tickets.root}/{id}/{tickets.subfolders.implementation}/{tickets.artifacts.files_changed}` + `{tickets.artifacts.implementation_notes}` |
+| Code Review Agent            | `{tickets.root}/{id}/{tickets.subfolders.implementation}/{tickets.artifacts.files_changed}` + `{tickets.root}/{id}/{tickets.subfolders.test_reports}/{tickets.artifacts.test_report}` |
+| Bugfix Agent                 | `{tickets.root}/{id}/{tickets.subfolders.test_reports}/{tickets.artifacts.test_report}` + `{tickets.root}/{id}/{tickets.subfolders.review_reports}/{tickets.artifacts.review_report}` |
+| Orchestrator                 | All of the above                                                         |
 
 ---
 
@@ -79,13 +78,13 @@ Each agent reads the prior-stage outputs relevant to its work:
 After reading all sources, each agent MUST perform a quick internal validation:
 
 1. **Consistency check**: Does the ticket context align with the global architecture?
-   If not, flag the inconsistency to the orchestrator before proceeding.
+   If not, flag the inconsistency to the orchestrator before proceeding.
 
 2. **Scope check**: Is the ticket asking for something outside the current system's
-   defined boundaries? If so, flag it — do not silently extend scope.
+   defined boundaries? If so, flag it — do not silently extend scope.
 
 3. **Prior stage check**: Are all required prior-stage artifacts present?
-   If a required artifact is missing (e.g., an implementation agent running without an architecture decision), halt and report.
+   If a required artifact is missing (e.g., an implementation agent running without an architecture decision), halt and report.
 
 ---
 
@@ -101,13 +100,11 @@ from a previous run must not be assumed to be current.
 
 If the agent detects a conflict between context sources, it MUST report using this format:
 
-```
 CONTEXT CONFLICT DETECTED:
-Source A: {source file}  →  States: {relevant detail}
-Source B: {source file}  →  States: {conflicting detail}
+Source A: {source file}  →  States: {relevant detail}
+Source B: {source file}  →  States: {conflicting detail}
 
 Impact: {what breaks or becomes ambiguous if this conflict is not resolved}
 Recommendation: {which source the agent believes should take precedence and why}
 
-Awaiting orchestrator instruction before proceeding.
-```
+Awaiting orchestrator instruction before proceeding

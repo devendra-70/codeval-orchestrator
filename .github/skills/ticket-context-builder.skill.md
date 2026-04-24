@@ -1,178 +1,166 @@
-# Behaviour: Log Writer
+# Skill: Ticket Context Builder
 
 ## Purpose
-Every agent MUST record its actions in the master agent log.
-Logging is not optional — it is a required step at agent start and agent completion.
-This creates an immutable audit trail of who did what and when across the full pipeline.
+Pull a Jira ticket's full details and write a standardised `ticket-context.md`
+into `tickets/{TICKET_ID}/` so every subsequent pipeline agent has a single,
+authoritative source of truth for the ticket.
 
 ---
 
-## Log File Locations
+## When This Skill Is Invoked
 
-| Log File                                      | Updated By          | Contains                                      |
-|-----------------------------------------------|---------------------|-----------------------------------------------|
-| `.github/logs/master-agent-log.md`            | ALL agents          | Every agent start, completion, and key action |
-| `.github/logs/configuration-change-log.md`    | Any agent that touches config + Orchestrator | Config change requests and outcomes |
-| `.github/logs/persistent-issues-log.md`       | Orchestrator + Loop Tracker skill | Issues seen across 3+ loop runs |
+The Orchestrator invokes this skill at pipeline start, after a human pulls a
+ticket and provides the ticket ID. It runs ONCE per ticket run.
 
 ---
 
-## Master Agent Log — Entry Format
+## Inputs Required
 
-Every agent appends to `.github/logs/master-agent-log.md`.
-Use the **exact pipe-delimited format** below. Never deviate.
-
-```
-| {ISO_8601_TIMESTAMP} | {AGENT_NAME} | {ACTION} | {ARTIFACT_PATH} | {STATUS} |
-```
-
-### Field Definitions
-
-| Field              | Value Rules                                                               |
-|--------------------|---------------------------------------------------------------------------|
-| ISO_8601_TIMESTAMP | UTC time: `2026-04-23T14:32:01Z`                                          |
-| AGENT_NAME         | Exact agent name from the agent's `name:` frontmatter                    |
-| ACTION             | One of the defined action codes below                                     |
-| ARTIFACT_PATH      | Relative path to the file created/read/modified, or `N/A`               |
-| STATUS             | `STARTED`, `COMPLETE`, `FAILED`, `BLOCKED`, `AWAITING_HUMAN`, `SKIPPED` |
-
-### Action Codes (use exactly these)
-
-| Code                   | When to use                                                    |
-|------------------------|----------------------------------------------------------------|
-| `CONTEXT_READ`         | Agent finished reading all context sources                     |
-| `LOCK_ACQUIRED`        | Agent acquired a file lock                                     |
-| `LOCK_RELEASED`        | Agent released a file lock                                     |
-| `LOCK_CONFLICT`        | Agent found an existing lock and halted                        |
-| `ARTIFACT_CREATED`     | Agent created a new file                                       |
-| `ARTIFACT_UPDATED`     | Agent modified an existing file                                |
-| `CONFIG_CHANGE_REQUESTED` | Agent surfaced a config change for human approval           |
-| `CONFIG_CHANGE_ALLOWED`   | Human approved a config change                              |
-| `CONFIG_CHANGE_DENIED`    | Human denied a config change                                |
-| `CHECKPOINT_REACHED`   | Orchestrator presented a human checkpoint                      |
-| `HUMAN_APPROVED`       | Human responded APPROVE at a checkpoint                        |
-| `HUMAN_REJECTED`       | Human responded REJECT at a checkpoint                         |
-| `HUMAN_REVISED`        | Human responded REVISE at a checkpoint                         |
-| `LOOP_STARTED`         | Orchestrator started a review loop run                         |
-| `LOOP_EXITED`          | Human or orchestrator exited the review loop                   |
-| `PIPELINE_STARTED`     | Orchestrator began processing a ticket                         |
-| `PIPELINE_COMPLETE`    | Orchestrator completed all stages for a ticket                 |
-| `AGENT_FAILED`         | An agent halted due to error or unresolvable conflict          |
-| `BOUNDARY_VIOLATION`   | Agent attempted to write outside its designated area           |
+| Input             | Source                          | Notes                                        |
+|-------------------|---------------------------------|----------------------------------------------|
+| `TICKET_ID`       | Human provides at pipeline start | e.g. `EPMICMPCOD-137`                        |
+| Jira credentials  | Pre-configured in MCP/env        | Agent uses existing jira-sync.agent.md config |
 
 ---
 
-## Mandatory Log Events Per Agent
+## Step 1 — Pull Ticket from Jira
 
-### All Agents — Required Log Entries
+Use the existing Jira agent configuration to fetch:
 
-1. **On invocation start:**
-   ```
-   | {TS} | {AGENT} | CONTEXT_READ | tickets/{id}/ticket-context.md | COMPLETE |
-   ```
+- Ticket title / summary
+- Ticket description (full text)
+- Acceptance criteria (if present as a field or in the description)
+- Ticket type (Story / Bug / Task / Sub-task)
+- Story points / estimate
+- Linked epic (epic key + epic name)
+- Linked tickets (blocks / blocked-by / relates-to)
+- Labels and components
+- Assignee
+- Reporter
+- Current status
+- Sprint (if assigned)
+- Attachments list (names only, not content)
 
-2. **On lock acquisition (if applicable):**
-   ```
-   | {TS} | {AGENT} | LOCK_ACQUIRED | tickets/{id}/.locks/{area}.lock | COMPLETE |
-   ```
+If the Jira fetch fails:
+TICKET FETCH ERROR: Could not retrieve {TICKET_ID} from Jira.
+Reason: {error message}
+The pipeline cannot start without ticket context. Please verify the ticket ID
+and Jira connectivity, then retry.
 
-3. **On each file created or updated:**
-   ```
-   | {TS} | {AGENT} | ARTIFACT_CREATED | tickets/{id}/{path/to/file.md} | COMPLETE |
-   ```
-
-4. **On lock release:**
-   ```
-   | {TS} | {AGENT} | LOCK_RELEASED | tickets/{id}/.locks/{area}.lock | COMPLETE |
-   ```
-
-5. **On task completion:**
-   ```
-   | {TS} | {AGENT} | {PRIMARY_ACTION_CODE} | {primary artifact path} | COMPLETE |
-   ```
-
-6. **On failure or block:**
-   ```
-   | {TS} | {AGENT} | AGENT_FAILED | {context} | FAILED |
-   ```
+Halt. Do not create a partial context file.
 
 ---
 
-## Configuration Change Log — Entry Format
+## Step 2 — Create Ticket Directory
 
-Append to `.github/logs/configuration-change-log.md`:
+Create the following folder structure if it does not exist:
 
-```
-| {ISO_8601_TIMESTAMP} | {AGENT_NAME} | {FILE_PATH} | {CHANGE_SUMMARY} | {HUMAN_DECISION} |
-```
+Paths resolved from agent-config.yml:
 
-| Field           | Value                                      |
-|-----------------|--------------------------------------------|
-| CHANGE_SUMMARY  | One sentence: what changed and why         |
-| HUMAN_DECISION  | `ALLOWED`, `DENIED`, or `PENDING`          |
+{tickets.root}/{TICKET_ID}/
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.locks}/
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.architecture}/
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.implementation}/
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.test_reports}/
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.review_reports}/
+{tickets.root}/{TICKET_ID}/{tickets.subfolders.bugfix_reports}/
 
-Log the entry at the time of the request (status = `PENDING`), then update to `ALLOWED` or `DENIED` after the human responds. If the log system does not support in-place updates, append a second row with the final decision.
-
----
-
-## Persistent Issues Log — Entry Format
-
-Append to `.github/logs/persistent-issues-log.md` when the Loop Tracker skill
-identifies an issue appearing in 3 or more consecutive runs:
-
-```
-| {TICKET_ID} | {ISSUE_FINGERPRINT} | {FIRST_SEEN_RUN} | {RUN_COUNT} | {LAST_SEEN_TIMESTAMP} | {STATUS} |
-```
-
-| Field              | Value                                                       |
-|--------------------|-------------------------------------------------------------|
-| ISSUE_FINGERPRINT  | Short description identifying the issue uniquely            |
-| STATUS             | `ACTIVE`, `RESOLVED`, `ESCALATED`                           |
 
 ---
 
-## File Initialisation Rule
+## Step 3 — Write ticket-context.md
 
-If any log file does not exist when an agent first tries to append to it,
-the agent MUST create it with the appropriate header before appending:
+Write the file to: `{tickets.root}/{TICKET_ID}/{tickets.subfolders.context_file}`
 
-**master-agent-log.md header:**
+Use the EXACT template below. Do not omit any section.
+If a field is not available from Jira, write `N/A`.
+
 ```markdown
-# Master Agent Log
+# Ticket Context — {TICKET_ID}
 
-> All agent actions across all ticket runs are recorded here.
-> Format: Timestamp | Agent | Action | Artifact | Status
-
-| Timestamp | Agent | Action | Artifact | Status |
-|-----------|-------|--------|----------|--------|
-```
-
-**configuration-change-log.md header:**
-```markdown
-# Configuration Change Log
-
-> All configuration file change requests and outcomes are recorded here.
-
-| Timestamp | Agent | Config File | Change Summary | Human Decision |
-|-----------|-------|-------------|----------------|----------------|
-```
-
-**persistent-issues-log.md header:**
-```markdown
-# Persistent Issues Log
-
-> Issues that have appeared in 3 or more consecutive loop runs are recorded here.
-
-| Ticket ID | Issue | First Seen Run | Run Count | Last Seen | Status |
-|-----------|-------|---------------|-----------|-----------|--------|
-```
+**Generated:** {ISO_8601_TIMESTAMP}
+**Pipeline Run:** 1
+**Status at Pull:** {Jira status}
 
 ---
 
-## Non-Negotiable Rules
+## Ticket Details
 
-- Logging is NEVER optional — a task is not complete if it has no log entry
-- Agents MUST NOT modify or delete prior log entries
-- Agents MUST NOT reformat or reorder existing log rows
-- All timestamps MUST be UTC
-- Log files are owned by the Orchestrator; individual agents append only
+| Field            | Value                                |
+|------------------|--------------------------------------|
+| Ticket ID        | {TICKET_ID}                          |
+| Title            | {ticket summary/title}               |
+| Type             | Story / Bug / Task / Sub-task        |
+| Epic             | {EPIC_KEY} — {Epic Name}             |
+| Story Points     | {points or N/A}                      |
+| Assignee         | {name or N/A}                        |
+| Reporter         | {name}                               |
+| Sprint           | {sprint name or N/A}                 |
+| Labels           | {comma-separated or N/A}             |
+| Components       | {comma-separated or N/A}             |
+
+---
+
+## Description
+
+{Full ticket description, preserving formatting as markdown}
+
+---
+
+## Acceptance Criteria
+
+{Acceptance criteria as a checklist. If not explicitly defined in Jira, extract them
+from the description. If none can be determined, write: "No formal acceptance criteria defined."}
+
+- [ ] {criterion 1}
+- [ ] {criterion 2}
+
+---
+
+## Linked Tickets
+
+| Relationship | Ticket ID     | Title                 |
+|--------------|---------------|-----------------------|
+| Blocks       | {KEY}         | {title}               |
+| Blocked by   | {KEY}         | {title}               |
+| Relates to   | {KEY}         | {title}               |
+
+---
+
+## Attachments
+
+{List of attachment filenames, or "None"}
+
+---
+
+## Pipeline Metadata
+
+| Field               | Value               |
+|---------------------|---------------------|
+| Pipeline started    | {ISO_8601_TIMESTAMP} |
+| Current stage       | Context Built       |
+| Architecture run    | Pending             |
+| Implementation run  | Pending             |
+| Review loop runs    | 0                   |
+Step 4 — Log Creation
+Append to {github.logs.master_agent_log}:
+
+| {TIMESTAMP} | Orchestrator | ARTIFACT_CREATED | {tickets.root}/{TICKET_ID}/{tickets.subfolders.context_file} | COMPLETE |
+Step 5 — Signal Ready
+Return to the orchestrator:
+
+TICKET CONTEXT BUILT:
+  Ticket : {TICKET_ID} — {title}
+  Epic   : {EPIC_KEY}
+  Type   : {type}
+  Path   : tickets/{TICKET_ID}/ticket-context.md
+
+Ready to advance to Architecture stage.
+Idempotency Rule
+If {tickets.root}/{TICKET_ID}/{tickets.subfolders.context_file} already exists (re-run scenario):
+
+Do NOT overwrite it
+
+Instead, append a new ## Pipeline Re-run — {TIMESTAMP} section with a note that the pipeline was re-started
+
+Preserve all prior pipeline metadata

@@ -1,178 +1,125 @@
-# Behaviour: Log Writer
+# Skill: File Lock Manager
 
 ## Purpose
-Every agent MUST record its actions in the master agent log.
-Logging is not optional — it is a required step at agent start and agent completion.
-This creates an immutable audit trail of who did what and when across the full pipeline.
+Provide the Orchestrator with explicit lock management operations across all
+agents and ticket runs. While individual agents self-manage their locks via
+`file-lock.behaviour.md`, the Orchestrator uses this skill to monitor,
+resolve conflicts, and clean up stale locks.
 
 ---
 
-## Log File Locations
+## Operations
 
-| Log File                                      | Updated By          | Contains                                      |
-|-----------------------------------------------|---------------------|-----------------------------------------------|
-| `.github/logs/master-agent-log.md`            | ALL agents          | Every agent start, completion, and key action |
-| `.github/logs/configuration-change-log.md`    | Any agent that touches config + Orchestrator | Config change requests and outcomes |
-| `.github/logs/persistent-issues-log.md`       | Orchestrator + Loop Tracker skill | Issues seen across 3+ loop runs |
+### `acquire_lock(ticket_id, area, agent_name, purpose)`
 
----
+Creates a lock file at `{tickets.root}/{ticket_id}/{tickets.subfolders.locks}/{locks.<area>}`.
 
-## Master Agent Log — Entry Format
-
-Every agent appends to `.github/logs/master-agent-log.md`.
-Use the **exact pipe-delimited format** below. Never deviate.
-
-```
-| {ISO_8601_TIMESTAMP} | {AGENT_NAME} | {ACTION} | {ARTIFACT_PATH} | {STATUS} |
-```
-
-### Field Definitions
-
-| Field              | Value Rules                                                               |
-|--------------------|---------------------------------------------------------------------------|
-| ISO_8601_TIMESTAMP | UTC time: `2026-04-23T14:32:01Z`                                          |
-| AGENT_NAME         | Exact agent name from the agent's `name:` frontmatter                    |
-| ACTION             | One of the defined action codes below                                     |
-| ARTIFACT_PATH      | Relative path to the file created/read/modified, or `N/A`               |
-| STATUS             | `STARTED`, `COMPLETE`, `FAILED`, `BLOCKED`, `AWAITING_HUMAN`, `SKIPPED` |
-
-### Action Codes (use exactly these)
-
-| Code                   | When to use                                                    |
-|------------------------|----------------------------------------------------------------|
-| `CONTEXT_READ`         | Agent finished reading all context sources                     |
-| `LOCK_ACQUIRED`        | Agent acquired a file lock                                     |
-| `LOCK_RELEASED`        | Agent released a file lock                                     |
-| `LOCK_CONFLICT`        | Agent found an existing lock and halted                        |
-| `ARTIFACT_CREATED`     | Agent created a new file                                       |
-| `ARTIFACT_UPDATED`     | Agent modified an existing file                                |
-| `CONFIG_CHANGE_REQUESTED` | Agent surfaced a config change for human approval           |
-| `CONFIG_CHANGE_ALLOWED`   | Human approved a config change                              |
-| `CONFIG_CHANGE_DENIED`    | Human denied a config change                                |
-| `CHECKPOINT_REACHED`   | Orchestrator presented a human checkpoint                      |
-| `HUMAN_APPROVED`       | Human responded APPROVE at a checkpoint                        |
-| `HUMAN_REJECTED`       | Human responded REJECT at a checkpoint                         |
-| `HUMAN_REVISED`        | Human responded REVISE at a checkpoint                         |
-| `LOOP_STARTED`         | Orchestrator started a review loop run                         |
-| `LOOP_EXITED`          | Human or orchestrator exited the review loop                   |
-| `PIPELINE_STARTED`     | Orchestrator began processing a ticket                         |
-| `PIPELINE_COMPLETE`    | Orchestrator completed all stages for a ticket                 |
-| `AGENT_FAILED`         | An agent halted due to error or unresolvable conflict          |
-| `BOUNDARY_VIOLATION`   | Agent attempted to write outside its designated area           |
+**Pre-condition check:**
+1. Read `{tickets.root}/{ticket_id}/{tickets.subfolders.locks}/{locks.<area>}`
+2. If it exists and is NOT stale (< {locks.stale_threshold_minutes} minutes old):
+   - Return: `CONFLICT — held by {owner} since {timestamp}`
+   - Do NOT overwrite
+3. If it exists and IS stale (≥ {locks.stale_threshold_minutes} minutes old):
+   - Return: `STALE_LOCK — held by {owner} since {timestamp}. Use force_release to clear.`
+   - Do NOT auto-clear without orchestrator instruction
+4. If it does not exist:
+   - Write lock file with content:
+     ```
+     agent: {agent_name}
+     ticket: {ticket_id}
+     area: {area}
+     acquired: {ISO_8601_TIMESTAMP}
+     purpose: {purpose}
+     ```
+   - Return: `ACQUIRED`
 
 ---
 
-## Mandatory Log Events Per Agent
+### `release_lock(ticket_id, area, agent_name)`
 
-### All Agents — Required Log Entries
+Deletes the lock file at `{tickets.root}/{ticket_id}/{tickets.subfolders.locks}/{locks.<area>}`.
 
-1. **On invocation start:**
-   ```
-   | {TS} | {AGENT} | CONTEXT_READ | tickets/{id}/ticket-context.md | COMPLETE |
-   ```
-
-2. **On lock acquisition (if applicable):**
-   ```
-   | {TS} | {AGENT} | LOCK_ACQUIRED | tickets/{id}/.locks/{area}.lock | COMPLETE |
-   ```
-
-3. **On each file created or updated:**
-   ```
-   | {TS} | {AGENT} | ARTIFACT_CREATED | tickets/{id}/{path/to/file.md} | COMPLETE |
-   ```
-
-4. **On lock release:**
-   ```
-   | {TS} | {AGENT} | LOCK_RELEASED | tickets/{id}/.locks/{area}.lock | COMPLETE |
-   ```
-
-5. **On task completion:**
-   ```
-   | {TS} | {AGENT} | {PRIMARY_ACTION_CODE} | {primary artifact path} | COMPLETE |
-   ```
-
-6. **On failure or block:**
-   ```
-   | {TS} | {AGENT} | AGENT_FAILED | {context} | FAILED |
-   ```
+**Safety check:**
+1. Read the lock file
+2. Verify the `agent` field matches `agent_name`
+3. If match: delete the file, return `RELEASED`
+4. If mismatch: return `DENIED — lock owned by {actual owner}, not {agent_name}`
+5. If file doesn't exist: return `NOT_FOUND — no lock to release`
 
 ---
 
-## Configuration Change Log — Entry Format
+### `check_lock(ticket_id, area)`
 
-Append to `.github/logs/configuration-change-log.md`:
+Reads lock status without modifying anything.
 
-```
-| {ISO_8601_TIMESTAMP} | {AGENT_NAME} | {FILE_PATH} | {CHANGE_SUMMARY} | {HUMAN_DECISION} |
-```
-
-| Field           | Value                                      |
-|-----------------|--------------------------------------------|
-| CHANGE_SUMMARY  | One sentence: what changed and why         |
-| HUMAN_DECISION  | `ALLOWED`, `DENIED`, or `PENDING`          |
-
-Log the entry at the time of the request (status = `PENDING`), then update to `ALLOWED` or `DENIED` after the human responds. If the log system does not support in-place updates, append a second row with the final decision.
+Returns one of:
+- `FREE` — no lock file exists
+- `LOCKED by {agent_name} since {timestamp} for: {purpose}` — active lock
+- `STALE — locked by {agent_name} since {timestamp} (> {locks.stale_threshold_minutes} min ago)` — stale lock
 
 ---
 
-## Persistent Issues Log — Entry Format
+### `list_locks(ticket_id)`
 
-Append to `.github/logs/persistent-issues-log.md` when the Loop Tracker skill
-identifies an issue appearing in 3 or more consecutive runs:
+Lists all current locks for a ticket.
 
-```
-| {TICKET_ID} | {ISSUE_FINGERPRINT} | {FIRST_SEEN_RUN} | {RUN_COUNT} | {LAST_SEEN_TIMESTAMP} | {STATUS} |
-```
-
-| Field              | Value                                                       |
-|--------------------|-------------------------------------------------------------|
-| ISSUE_FINGERPRINT  | Short description identifying the issue uniquely            |
-| STATUS             | `ACTIVE`, `RESOLVED`, `ESCALATED`                           |
+Returns a table:
+Area          ,Owner Agent          ,Acquired            ,Age    ,Status  
+implementation,Backend Agent        ,2026-04-23T14:00:00Z,5 min  ,ACTIVE  
+tests          ,Unit Test Agent      ,2026-04-23T13:20:00Z,45 min  ,STALE  
 
 ---
 
-## File Initialisation Rule
+### `force_release(ticket_id, area)`
 
-If any log file does not exist when an agent first tries to append to it,
-the agent MUST create it with the appropriate header before appending:
+Orchestrator-only operation. Forcibly deletes a stale or orphaned lock.
 
-**master-agent-log.md header:**
-```markdown
-# Master Agent Log
+**Conditions for use:**
+- Lock is stale (≥ {locks.stale_threshold_minutes} minutes old), OR
+- Orchestrator has confirmed the owning agent has terminated or failed
 
-> All agent actions across all ticket runs are recorded here.
-> Format: Timestamp | Agent | Action | Artifact | Status
-
-| Timestamp | Agent | Action | Artifact | Status |
-|-----------|-------|--------|----------|--------|
-```
-
-**configuration-change-log.md header:**
-```markdown
-# Configuration Change Log
-
-> All configuration file change requests and outcomes are recorded here.
-
-| Timestamp | Agent | Config File | Change Summary | Human Decision |
-|-----------|-------|-------------|----------------|----------------|
-```
-
-**persistent-issues-log.md header:**
-```markdown
-# Persistent Issues Log
-
-> Issues that have appeared in 3 or more consecutive loop runs are recorded here.
-
-| Ticket ID | Issue | First Seen Run | Run Count | Last Seen | Status |
-|-----------|-------|---------------|-----------|-----------|--------|
-```
+**Process:**
+1. Read the lock file and log its contents before deletion:
+   ```
+   | {TS} | Orchestrator | LOCK_RELEASED (forced) | {tickets.root}/{id}/{tickets.subfolders.locks}/{locks.<area>} | COMPLETE |
+   ```
+2. Delete the lock file
+3. Return: `FORCE_RELEASED — previous owner was {agent_name}`
 
 ---
 
-## Non-Negotiable Rules
+### `release_all_locks(ticket_id)`
 
-- Logging is NEVER optional — a task is not complete if it has no log entry
-- Agents MUST NOT modify or delete prior log entries
-- Agents MUST NOT reformat or reorder existing log rows
-- All timestamps MUST be UTC
-- Log files are owned by the Orchestrator; individual agents append only
+Orchestrator-only operation. Releases ALL locks for a ticket.
+Used at pipeline completion, pipeline abort, or after a human `ABORT` instruction.
+
+**Process:**
+1. List all `.lock` files in `{tickets.root}/{ticket_id}/{tickets.subfolders.locks}/`
+2. Log each one before deletion
+3. Delete all of them
+4. Return: `ALL_LOCKS_RELEASED — {N} locks cleared`
+
+---
+
+## Lock Area Reference
+
+| Area             | Lock File              | Owning Agent                  |
+|------------------|------------------------|-------------------------------|
+| `architecture`   | `{locks.architecture}` | Architecture Agent            |
+| `implementation` | `{locks.implementation}` | Backend Implementation Agent  |
+| `tests`          | `{locks.tests}`        | Unit Test Agent               |
+| `review`         | `{locks.review}`       | Code Review Agent             |
+| `bugfix`         | `{locks.bugfix}`       | Bugfix Agent                  |
+| `orchestrator`   | `{locks.orchestrator}` | Orchestrator Agent            |
+
+---
+
+## Lock Conflict Resolution Guide (for Orchestrator)
+
+| Scenario                                                | Recommended Action                                  |
+|---------------------------------------------------------|-----------------------------------------------------|
+| Agent A trying to write, Agent B holds lock             | Wait for Agent B to complete and release            |
+| Lock is stale (agent timed out or crashed)              | `force_release`, then re-invoke the owning agent    |
+| Two agents both need `implementation.lock`              | Serialise — complete one agent, then the other      |
+| Pipeline aborting mid-run                               | `release_all_locks` before exit                     |
+| Lock file is corrupted / unparseable                    | `force_release`, log incident, notify human         |

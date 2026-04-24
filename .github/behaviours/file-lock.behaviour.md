@@ -10,14 +10,14 @@ Lock files are plain text files stored in `tickets/{TICKET_ID}/.locks/`.
 
 Each agent owns one or more lock areas. An agent MUST only acquire locks for its own areas.
 
-| Lock File                  | Owner Agent               | Protected Paths                              |
+| Lock File                  | Owner Agent               | Protected Paths                                      |
 |----------------------------|---------------------------|----------------------------------------------|
-| `architecture.lock`        | Architecture Agent        | `tickets/{id}/architecture/**`               |
-| `implementation.lock`      | Backend Implementation Agent | `tickets/{id}/implementation/**` + `src/main/java/**` |
-| `tests.lock`               | Unit Test Agent           | `tickets/{id}/test-reports/**` + `src/test/java/**` |
-| `review.lock`              | Code Review Agent         | `tickets/{id}/review-reports/**` (READ-ONLY agent — lock is advisory) |
-| `bugfix.lock`              | Bugfix Agent              | `tickets/{id}/bugfix-reports/**` + `src/main/java/**` (patching) |
-| `orchestrator.lock`        | Orchestrator Agent        | `tickets/{id}/*.md` + `.github/logs/**`      |
+| `{locks.architecture}`     | Architecture Agent        | `{tickets.root}/{id}/{tickets.subfolders.architecture}/**` |
+| `{locks.implementation}`   | Backend Implementation Agent | `{tickets.root}/{id}/{tickets.subfolders.implementation}/**` + `{codegen.base}/**` |
+| `{locks.tests}`            | Unit Test Agent           | `{tickets.root}/{id}/{tickets.subfolders.test_reports}/**` + `{testgen.base}/**` |
+| `{locks.review}`           | Code Review Agent         | `{tickets.root}/{id}/{tickets.subfolders.review_reports}/**` (READ-ONLY agent — lock is advisory) |
+| `{locks.bugfix}`           | Bugfix Agent              | `{tickets.root}/{id}/{tickets.subfolders.bugfix_reports}/**` + `{codegen.base}/**` (patching) |
+| `{locks.orchestrator}`     | Orchestrator Agent        | `{tickets.root}/{id}/*.md` + `{github.logs.root}/**` |
 
 ---
 
@@ -25,7 +25,7 @@ Each agent owns one or more lock areas. An agent MUST only acquire locks for its
 
 Before writing ANY file, an agent MUST:
 
-1. Check if `tickets/{TICKET_ID}/.locks/{area}.lock` exists
+1. Check if `{tickets.root}/{TICKET_ID}/{tickets.subfolders.locks}/{locks.<area>}` exists
 2. If the lock file EXISTS:
    - Read the lock file to identify the owner agent and timestamp
    - HALT immediately
@@ -74,12 +74,12 @@ An agent MUST NOT write to files outside its designated lock areas, even if no l
 
 | Agent                  | MAY write to                                   | MUST NOT write to                          |
 |------------------------|------------------------------------------------|--------------------------------------------|
-| Architecture Agent     | `tickets/{id}/architecture/**`                 | `src/**`, `tickets/{id}/implementation/**` |
-| Backend Agent          | `tickets/{id}/implementation/**`, `src/main/java/**` | `src/test/java/**`                   |
-| Unit Test Agent        | `tickets/{id}/test-reports/**`, `src/test/java/**` | `src/main/java/**`                     |
-| Code Review Agent      | `tickets/{id}/review-reports/**`               | ALL source files (read-only agent)         |
-| Bugfix Agent           | `tickets/{id}/bugfix-reports/**`, `src/main/java/**` (patch only) | `src/test/java/**`          |
-| Orchestrator           | `tickets/{id}/*.md`, `.github/logs/**`, `.locks/**` | All source files                      |
+| Architecture Agent     | `{tickets.root}/{id}/{tickets.subfolders.architecture}/**` | `{codegen.base}/**`, `implementation/**` |
+| Backend Agent          | `{tickets.root}/{id}/{tickets.subfolders.implementation}/**`, `{codegen.base}/**` | `{testgen.base}/**` |
+| Unit Test Agent        | `{tickets.root}/{id}/{tickets.subfolders.test_reports}/**`, `{testgen.base}/**` | `{codegen.base}/**` |
+| Code Review Agent      | `{tickets.root}/{id}/{tickets.subfolders.review_reports}/**` | ALL source files (read-only agent) |
+| Bugfix Agent           | `{tickets.root}/{id}/{tickets.subfolders.bugfix_reports}/**`, `{codegen.base}/**` (patch only) | `{testgen.base}/**` |
+| Orchestrator           | `{tickets.root}/{id}/*.md`, `{github.logs.root}/**`, `{tickets.subfolders.locks}/**` | All source files |
 
 ---
 
@@ -89,10 +89,8 @@ If an agent detects it is about to write outside its designated area:
 - STOP immediately
 - Do NOT write the file
 - Report the violation to the orchestrator with full context:
-  ```
-  BOUNDARY VIOLATION ATTEMPT:
-  Agent: {AGENT_NAME}
-  Attempted path: {file path}
-  Reason flagged: Outside designated area
-  Action taken: Aborted. Awaiting orchestrator instruction.
-  ```
+BOUNDARY VIOLATION ATTEMPT:
+Agent: {AGENT_NAME}
+Attempted path: {file path}
+Reason flagged: Outside designated area
+Action taken: Aborted. Awaiting orchestrator instruction.
