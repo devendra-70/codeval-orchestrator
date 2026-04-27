@@ -1,0 +1,100 @@
+# =============================================================================
+# Codeval Orchestrator — .gitignore
+# =============================================================================
+# Pipeline-internal artifacts are orchestrator scratch state, not deliverables.
+# Only source code and the agent/skill/behaviour definitions are tracked.
+# See .github/document-templates/git-branch-naming.md for branch & commit rules.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Pipeline-internal artifacts (per-ticket scratch produced by the orchestrator)
+# -----------------------------------------------------------------------------
+# Includes: ticket-context.md, git-context.md, architecture-decision.md,
+# files-changed.md, implementation-notes.md, run-N-report.md,
+# run-N-review.md, run-N-bugfix.md, and all .locks/ contents.
+tickets/
+
+# Orchestrator + agent log files (master log, persistent issues, config changes,
+# git operations). Logs are local audit trails, not history we want on origin.
+.github/logs/
+
+# -----------------------------------------------------------------------------
+# Build outputs
+# -----------------------------------------------------------------------------
+target/
+build/
+out/
+dist/
+bin/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+
+# -----------------------------------------------------------------------------
+# Dependency / package manager caches
+# -----------------------------------------------------------------------------
+node_modules/
+.pnpm-store/
+.yarn/
+.gradle/
+.mvn/
+.m2/
+
+# -----------------------------------------------------------------------------
+# Test / coverage reports
+# -----------------------------------------------------------------------------
+coverage/
+.coverage
+.nyc_output/
+htmlcov/
+*.lcov
+junit.xml
+TEST-*.xml
+
+# -----------------------------------------------------------------------------
+# IDE / editor
+# -----------------------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.fleet/
+.vs/
+*.swp
+*.swo
+
+# -----------------------------------------------------------------------------
+# OS noise
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# Secrets / local env
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.local.*
+
+# -----------------------------------------------------------------------------
+# Logs (general, outside .github/logs/)
+# -----------------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -----------------------------------------------------------------------------
+# Tracked exceptions (intentional opt-ins)
+# -----------------------------------------------------------------------------
+# If you want to track a specific historical artifact, force-add it with:
+#   git add -f tickets/EXAMPLE-1/architecture/architecture-decision.md
+
