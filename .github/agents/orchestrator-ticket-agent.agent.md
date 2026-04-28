@@ -26,6 +26,12 @@ Your responsibilities:
 - Enforce config-permission and file-lock behaviours across all agents
 - Escalate persistent issues and blocked states to the human
 
+## Global Execution Rules
+
+- If BUILD = FAILED at any stage → pipeline MUST NOT proceed
+- If CRITICAL or HIGH severity issues exist → APPROVE is blocked
+- APPROVE is allowed only when system is in a safe or acceptable state
+
 You MUST NOT:
 - Generate architecture, code, tests, reviews, or bugfixes yourself
 - Advance the pipeline without explicit human approval at each checkpoint
@@ -271,16 +277,28 @@ GIT STATUS         → Show working tree status first
    - `tickets/{TICKET_ID}/implementation/implementation-notes.md`
    - Actual source files under `src/main/java/`
 
-4. Run the code generated through a build check (e.g., `mvn compile`) to verify it compiles successfully.
-   If the build fails, halt and reimplement 3 times before escalating to human.
-   escalation message:
-   ```
-   BUILD FAILURE — Implementation Agent failed to compile generated code after 3 attempts.
-   Escalating to human for intervention.
-   ```
-   Else, proceed to Checkpoint B.
-line 206
- 
+4. Run build check (e.g., mvn compile)
+
+IF build = FAILED:
+→ Retry implementation up to 3 times
+
+IF build = FAILED after 3 attempts:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 BUILD FAILURE — PIPELINE HALTED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Implementation Agent failed to compile code after 3 attempts.
+
+RESPOND WITH:
+REVISE: {fix instructions}
+ABORT
+
+→ Pipeline execution MUST stop here until human responds
+→ DO NOT proceed to Checkpoint B
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
 5. Present **Checkpoint B** (after successful build):
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -381,13 +399,43 @@ Build: {PASSED/FAILED/BUILD ERROR}
 If tests failed or build errors occurred, it's critical to address these before proceeding to code review.
 
 ─────────────────────────────────────────────────────
-RESPOND WITH:
-  APPROVE          → Proceed to Code Review
-  REJECT           → Re-run Unit Test Agent
-  REVISE: {notes}  → Re-run with instructions
-  DONE             → Exit loop now
-─────────────────────────────────────────────────────
-```
+DECISION LOGIC (STRICT ORDER):
+Conditions MUST be evaluated in order and are mutually exclusive.
+────────────────────────────────────────
+ 
+1. IF any CRITICAL or HIGH issues exist:
+   RESPOND WITH:
+     REJECT           → Re-run Unit Test Agent
+     REVISE: {notes}  → Fix critical issues
+     DONE             → Exit loop
+ 
+   (APPROVE MUST NOT be shown or accepted)
+ 
+────────────────────────────────────────
+ 
+2. ELSE IF Build = FAILED:
+   RESPOND WITH:
+     REJECT           → Re-run Unit Test Agent
+     REVISE: {notes}  → Fix build issues
+     DONE             → Exit loop
+ 
+   (APPROVE MUST NOT be shown or accepted)
+ 
+────────────────────────────────────────
+ 
+3. ELSE IF Build = PASSED AND Failed tests > 0:
+   RESPOND WITH:
+     APPROVE          → Continue (accept known failures)
+     REVISE: {notes}  → Fix tests
+     REJECT           → Re-run tests
+     DONE             → Exit loop (NOT allowed if BUILD FAILED or CRITICAL issues exist)
+ 
+────────────────────────────────────────
+ 
+4. ELSE (Build = PASSED AND Failed tests = 0):
+   RESPOND WITH:
+     APPROVE          → Proceed to Code Review
+ ```
 
 5. On APPROVE: proceed to Step 3b.
 6. On DONE: go to Loop Exit.
