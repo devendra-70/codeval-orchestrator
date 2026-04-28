@@ -703,27 +703,270 @@ In all cases, advance to the next pipeline step.
 
 ---
 
-#### Loop Exit Conditions (auto-exit without human DONE)
+#### Step 3d — Code Refactor Agent
 
-The orchestrator automatically evaluates after every Checkpoint E:
+**Trigger:** Code Review Agent completed and approved (Step 3c APPROVE)
 
-| Condition | Exit Reason | Action |
-|---|---|---|
-| Zero CRITICAL or HIGH issues in latest review | `ZERO_ISSUES` | Surface to human, recommend DONE |
-| Run count ≥ max (default: 10) | `MAX_RUNS` | Force surface to human — cannot continue |
-| Persistent issues escalated (≥ 3 consecutive runs) | `ESCALATION` | Human must choose ESCALATE / OVERRIDE / DEFER |
-| Human responds DONE at any checkpoint | `HUMAN_DONE` | Exit immediately |
+This step is **silent** — no human checkpoint unless build fails.
 
-On auto-exit recommendation:
+1. Verify `code-review-report.md` and `TEST_REPORT.md` exist
+2. Invoke Code Refactor Agent with:
+   - `TICKET_ID = {id}`
+   - `RUN_NUMBER = {N}`
+3. Agent reads both reports
+4. Agent applies refactoring fixes (CRITICAL + HIGH severity)
+5. Agent writes `REFACTOR_REPORT.md`
+6. Run build check:
+   ```bash
+   mvn clean verify -Dmaven.test.failure.ignore=true -q
+   ```
+
+7. **Evaluate Build Result:**
+
+   **IF BUILD PASSED:**
+   - Log: `REFACTOR_BUILD_PASSED`
+   - Proceed to Step 3f (Coverage Verification)
+
+   **IF BUILD FAILED:**
+   - Log: `REFACTOR_BUILD_FAILED`
+   - Proceed to Step 3e (Bugfix Recovery)
+
+---
+
+#### Step 3e — Bugfix Agent (Conditional — Refactor Recovery)
+
+**Trigger:** Code Refactor Agent introduced build failure (Step 3d)
+
+Only runs if previous step's build failed.
+
+1. Invoke Bugfix Agent with:
+   - `TICKET_ID = {id}`
+   - `RUN_NUMBER = {N}`
+   - `CONTEXT = "refactor-recovery"` (short cycle, bug fix only)
+2. Agent runs `/analyze` — identifies refactor-induced bugs
+3. **Orchestrator presents brief plan:**
+
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ AUTO-EXIT CONDITION MET: {EXIT_REASON}
-{Explanation of why the orchestrator recommends exiting}
-
-RESPOND WITH:
-  DONE             → Accept recommendation and exit loop
-  CONTINUE         → Override and run another loop iteration
+⚠️ REFACTOR RECOVERY — Bugfix Agent
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Code Refactor Agent introduced build errors.
+Running Bugfix Agent to fix...
+
+{Bugfix Agent /analyze output}
+
+─────────────────────────────────────────────────────
+RESPOND WITH:
+  /approve         → Apply fixes
+  REVISE: {notes}  → Provide specific instructions
+  ABORT            → Stop pipeline; manual fix required
+─────────────────────────────────────────────────────
+```
+
+4. On `/approve`: Agent fixes and re-compiles
+5. Agent writes `bugfix-reports/run-{N}-bugfix-refactor.md`
+6. Run build check again:
+   ```bash
+   mvn clean verify -Dmaven.test.failure.ignore=true -q
+   ```
+
+7. **Evaluate Build Result:**
+
+   **IF BUILD PASSED:**
+   - Log: `BUGFIX_REFACTOR_BUILD_RECOVERED`
+   - Proceed to Step 3f (Coverage Verification)
+
+   **IF BUILD STILL FAILED:**
+   - Present checkpoint:
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ❌ BUILD STILL FAILING after Bugfix Recovery
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   
+   Refactor + Bugfix cannot recover. Manual intervention required.
+   
+   RESPOND WITH:
+     REVISE: {deep fix}  → Provide specific fix instructions
+     ABORT               → Stop pipeline; manual dev work needed
+   ─────────────────────────────────────────────────────
+   ```
+
+   On `REVISE`: Retry Code Refactor Agent with new instructions
+   On `ABORT`: Log `PIPELINE_ABORTED`, release locks, stop
+
+---
+
+#### Step 3f — Coverage Verification (Post-Refactor)
+
+**Trigger:** Code Refactor (3d) or Bugfix Recovery (3e) with BUILD PASSED
+
+Verifies that refactoring did not reduce coverage below thresholds.
+
+1. Coverage data already available from previous build
+   (refactor step ran `mvn clean verify` which includes JaCoCo)
+
+2. Extract coverage from `target/site/jacoco/jacoco.xml`:
+   - Service layer coverage: {X}%
+   - Controller layer coverage: {Y}%
+   - Overall coverage: {Z}%
+
+3. **Compare to Thresholds:**
+
+   ```python
+   service_ok = service_coverage >= 90
+   controller_ok = controller_coverage >= 100
+   overall_ok = overall_coverage >= 85
+   
+   if service_ok AND controller_ok AND overall_ok:
+       coverage_status = "✅ ACCEPTABLE"
+   else:
+       coverage_status = "⚠️ DEGRADED"
+   ```
+
+4. **Present Checkpoint I-{N}:**
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔵 CHECKPOINT I-{N} — Coverage Verification (Post-Refactor)
+Ticket: {TICKET_ID}  |  Stage: Post-Refactor Coverage  |  Time: {TIMESTAMP}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 COVERAGE REPORT (After Refactor):
+
+| Layer      | Coverage | Target | Status |
+|---|---|---|---|
+| Service    | {X}%     | ≥90%   | {✅/⚠️} |
+| Controller | {Y}%     | ≥100%  | {✅/⚠️} |
+| Overall    | {Z}%     | ≥85%   | {✅/⚠️} |
+
+Coverage Status: {coverage_status}
+
+📈 Changes from Pre-Refactor:
+  Service:    {Δ+X% / Δ−X%}
+  Controller: {Δ+X% / Δ−X%}
+  Overall:    {Δ+X% / Δ−X%}
+
+─────────────────────────────────────────────────────
+RESPOND WITH:
+  APPROVE          → Continue to Loop Exit Evaluation
+  REVISE: {notes}  → Proceed with notes (for next iteration)
+  RESTART          → Restart loop at 3a (Run {N+1})
+─────────────────────────────────────────────────────
+```
+
+5. **Handle Response:**
+
+   - **APPROVE** (coverage OK):
+      - Log: `COVERAGE_VERIFICATION_PASSED`
+      - Proceed to Loop Exit Evaluation
+
+   - **APPROVE** (coverage degraded):
+      - Log: `COVERAGE_VERIFICATION_DEGRADED_APPROVED`
+      - Proceed to Loop Exit Evaluation (human accepted)
+
+   - **REVISE**:
+      - Log: `COVERAGE_VERIFICATION_REVISED`
+      - Store notes
+      - Proceed to Loop Exit Evaluation
+
+   - **RESTART**:
+      - Log: `LOOP_RESTART_COVERAGE_DEGRADED`
+      - Reset attempt_count = 0
+      - Increment run_counter (N+1)
+      - Go back to Step 3a (Unit Test Agent)
+
+---
+
+#### Loop Exit Condition Evaluation (UPDATED)
+
+**Trigger:** After Checkpoint I-{N} (Coverage Verification) or Checkpoint D-{N} (if no refactor)
+
+Evaluate in STRICT order:
+
+```python
+# 1. Check coverage first
+if NOT (service_cov >= 90 AND controller_cov >= 100 AND overall_cov >= 85):
+    # Coverage below threshold
+    Log: LOOP_EXIT_COVERAGE_BELOW_THRESHOLD
+    present_autoexit_continue("Coverage thresholds not met. Restarting loop.")
+    restart_loop_at_3a()
+    return
+
+# 2. Check run count
+if run_count >= max_runs (default 10):
+    Log: LOOP_EXIT_MAX_RUNS
+    present_checkpoint_with_options("MAX_RUNS_REACHED", 
+                                    options=["DONE", "CONTINUE", "ABORT"])
+    return
+
+# 3. Check quality issues
+if critical_or_high_count == 0:
+    Log: LOOP_EXIT_ZERO_ISSUES
+    present_checkpoint_with_options("ZERO_ISSUES_COVERAGE_OK",
+                                    options=["DONE (recommended)", "CONTINUE"])
+    return
+
+# 4. Check escalations
+if persistent_escalation_detected:
+    Log: LOOP_EXIT_ESCALATION
+    present_checkpoint_with_options("ESCALATION_DETECTED",
+                                    options=["ESCALATE", "OVERRIDE", "DEFER"])
+    return
+
+# 5. Continue loop
+Log: LOOP_CONTINUE
+present_autoexit_continue("Quality issues remain; restarting loop.")
+restart_loop_at_3a()
+```
+
+**Auto-Exit Recommendation Display:**
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ LOOP EXIT EVALUATION — Run {N}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run Count: {N} / {max_runs}
+
+📊 COVERAGE STATUS:
+  Service:    {X}% / 90%  {✅/⚠️}
+  Controller: {Y}% / 100% {✅/⚠️}
+  Overall:    {Z}% / 85%  {✅/⚠️}
+
+🔍 QUALITY STATUS:
+  CRITICAL issues: {C}
+  HIGH issues: {H}
+  MEDIUM issues: {M}
+
+⚠️ ESCALATIONS: {count} (if any)
+
+─────────────────────────────────────────────────────
+
+EVALUATION RESULT:
+
+{IF coverage below:}
+  → Coverage thresholds not met
+  → Auto-restarting loop at Unit Test Agent
+
+{IF coverage OK + zero issues:}
+  → ✅ All gates passed!
+  → Recommendation: EXIT LOOP
+  → RESPOND WITH: DONE (recommended) / CONTINUE
+
+{IF coverage OK + issues remain:}
+  → Quality issues still present
+  → Auto-restarting loop at Unit Test Agent
+
+{IF run count = max:}
+  → Maximum iterations reached
+  → RESPOND WITH: DONE / CONTINUE / ABORT
+
+{IF escalation:}
+  → Persistent issues detected (≥3 runs)
+  → RESPOND WITH: ESCALATE / OVERRIDE / DEFER
+
+─────────────────────────────────────────────────────
 ```
 
 ---
@@ -849,9 +1092,13 @@ On ABORT:
 |---|---|---|
 | 1 | Architecture Design Agent | `/ticket-architect` → `/approve` |
 | 2 | Backend Implementation Agent | `/audit` → `/generate` → `/approve` |
-| 3a | Unit Test Agent | Invoked directly (no command needed — auto-detects mode) |
+| 3a | Unit Test Agent | Invoked directly + coverage threshold check (retry up to 3x) |
 | 3b | Bugfix Agent | `/analyze` → (human reviews plan) → `/approve` |
 | 3c | Code Review Agent | Invoked directly (scoped to files-changed.md automatically) |
+| 3d | Code Refactor Agent | Invoked directly (silent; outputs REFACTOR_REPORT.md only) |
+| 3e | Bugfix Agent (conditional) | `/analyze` → (brief plan) → `/approve` (only if refactor build fails) |
+| 3f | Coverage Verification | Check post-refactor coverage, present checkpoint |
+| Loop | Exit Evaluation | Check: coverage + quality + escalations + run count |
 | 0.5 | git-branch-manager (skill) | `setup_branch` |
 | post-each-stage | gitignore-curator (skill) → git-branch-manager (skill) | `classify_and_propose` → `commit_stage` |
 | on demand | git-branch-manager (skill) | `push_branch` / `report_status` |
@@ -862,6 +1109,26 @@ On ABORT:
 ## Master Log Events (Orchestrator Owns)
 
 ```
+COVERAGE_BELOW_THRESHOLD        → Coverage metrics below target thresholds
+COVERAGE_RETRY_{N}              → Unit test retry attempt N/3
+COVERAGE_THRESHOLDS_MET         → All coverage thresholds achieved
+COVERAGE_THRESHOLD_OVERRIDE     → Human overrode coverage check
+COVERAGE_THRESHOLD_DEGRADED     → Refactor reduced coverage
+COVERAGE_VERIFICATION_PASSED    → Post-refactor coverage check passed
+COVERAGE_VERIFICATION_DEGRADED  → Post-refactor coverage check failed
+CHECKPOINT_H_REACHED            → Unit Test coverage checkpoint
+CHECKPOINT_I_REACHED            → Post-Refactor coverage checkpoint
+REFACTOR_BUILD_PASSED           → Code Refactor Agent build succeeded
+REFACTOR_BUILD_FAILED           → Code Refactor Agent build failed
+BUGFIX_REFACTOR_TRIGGERED       → Bugfix Agent launched for refactor recovery
+BUGFIX_REFACTOR_BUILD_RECOVERED → Bugfix recovery restored build
+LOOP_RESTART_COVERAGE           → Restarting loop due to coverage
+LOOP_RESTART_QUALITY            → Restarting loop due to quality
+LOOP_CONTINUE                   → Loop incrementing to next iteration
+LOOP_EXIT_COVERAGE_BELOW        → Exit condition: coverage below threshold
+LOOP_EXIT_MAX_RUNS              → Exit condition: max iterations reached
+LOOP_EXIT_ZERO_ISSUES           → Exit condition: no critical/high issues
+LOOP_EXIT_ESCALATION            → Exit condition: escalation detected
 PIPELINE_STARTED      → Stage 0 begins
 ARTIFACT_CREATED      → ticket-context.md created
 CHECKPOINT_REACHED    → Each A/B/C/D/E checkpoint
