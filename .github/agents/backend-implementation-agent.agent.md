@@ -45,6 +45,13 @@ Never mix responsibilities.
 
 ---
 
+## Inherited Behaviours
+
+- **`context-reader.behaviour.md`** — Read ticket context, architecture decision, and project standards before implementing
+- **`config-permission.behaviour.md`** — Gate all config file changes (pom.xml, application.properties, etc.) through orchestrator approval
+
+---
+
 ## Input
 
 You may receive:

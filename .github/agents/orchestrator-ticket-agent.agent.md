@@ -103,24 +103,41 @@ Stage 2: Backend Implementation
 Stage 3: Review Loop (runs until human says DONE or exit condition met)
   ┌──────────────────────────────────────────────────────────┐
   │  loop-tracker: start_run(ticket_id)                      │
+  │  attempt_count = 0                                       │
   │         │                                                │
-  │  Unit Test Agent → run-N-report.md                       │
-  │    [CHECKPOINT C-N — APPROVE / REJECT / REVISE / DONE]   │
-  │         │ APPROVE   
-  │         │ [COMMIT? — human: COMMIT / EDIT: <msg> / SKIP / GIT STATUS]
-  │  Code Review Agent → run-N-review.md                     │
-  │    [CHECKPOINT D-N — APPROVE / REJECT / REVISE / DONE]   │
-  │         │ APPROVE  
-  │         │ [COMMIT? — human: COMMIT / EDIT: <msg> / SKIP / GIT STATUS]
-  │  loop-tracker: register_issues(...)                      │
-  │  [Check for persistent issues → escalate if needed]      │
-  │         │                                                │
-  │  Bugfix Agent → run-N-bugfix.md                          │
-  │    [CHECKPOINT E-N — APPROVE / REJECT / REVISE / DONE]   │
-  │         │ APPROVE
-  │         │ [COMMIT? — human: COMMIT / EDIT: <msg> / SKIP / GIT STATUS]
+  │  3a: Unit Test Agent (with Coverage Threshold Check)     │
+  │      → run-N-report.md                                   │
+  │      → Extract coverage: Services, Controllers, Overall  │
+  │      → If below threshold AND attempt < 3:               │
+  │         Retry Unit Test Agent (attempt++)                │
+  │      → Else: Show coverage & proceed                     │
+  │    [CHECKPOINT H-N — Coverage Report]                    │
+  │         │ APPROVE (proceed or override)                  │
+  │         │ [COMMIT? — human: COMMIT / EDIT / SKIP]        │
+  │         ▼                                                │
+  │  3b: Bugfix Agent → run-N-bugfix.md                      │
+  │    [CHECKPOINT F-N — APPROVE / REJECT / REVISE]          │
+  │         │ APPROVE                                        │
+  │         │ [COMMIT? — human: COMMIT / EDIT / SKIP]        │
+  │         ▼                                                │
+  │  3c: Code Review Agent → run-N-review.md                 │
+  │    [CHECKPOINT D-N — APPROVE / REJECT / REVISE]          │
+  │         │ APPROVE                                        │
+  │         │ [COMMIT? — human: COMMIT / EDIT / SKIP]        │
+  │         ▼                                                │
+  │  3d: Code Refactor Agent (silent unless build fails)     │
+  │      ├─ BUILD PASSED → Step 3f                           │
+  │      └─ BUILD FAILED → Step 3e (Bugfix recovery)         │
+  │         │ (if triggered)                                 │
+  │         ▼                                                │
+  │  3f: Coverage Verification (Post-Refactor)               │
+  │      → Check coverage thresholds again                   │
+  │      → If degraded or below: RESTART option              │
+  │    [CHECKPOINT I-N — Post-Refactor Coverage]             │
+  │         │ APPROVE / RESTART                              │
+  │         ├─ RESTART? → Back to 3a (Loop N+1)              │
+  │         └─ APPROVE? → Exit Evaluation                    │
   │  loop-tracker: register_resolved_issues(...)             │
-  │  loop-tracker: get_loop_summary(...)                     │
   │  [Evaluate exit conditions]                              │
   └──────────────────────────────────────────────────────────┘
          │ EXIT CONDITION MET
@@ -371,74 +388,127 @@ Log: `LOOP_STARTED — Run {N}`
 
 ---
 
-#### Step 3a — Unit Test Agent
+#### Step 3a — Unit Test Agent (with Coverage Threshold Checks)
 
-1. Invoke Unit Test Agent with:
+**Trigger:** Loop Start OR Coverage Retry OR Refactor Recovery (from 3f or 3e)
+
+1. Initialize (first run only):
+   ```
+   attempt_count = 0  (tracks unit test retries)
+   max_coverage_attempts = 3
+   ```
+
+2. Invoke Unit Test Agent with:
    - `TICKET_ID = {id}`
    - `RUN_NUMBER = {N}`
-2. Agent reads `implementation/files-changed.md` (Run 1) or `bugfix-reports/run-{N-1}-bugfix.md` (Run N+1)
-3. Agent writes `tickets/{TICKET_ID}/test-reports/run-{N}-report.md`
-4. Present **Checkpoint C-{N}**:
+   - `ATTEMPT = {attempt_count}`
+
+3. Agent reads `implementation/files-changed.md` (Run 1) or `bugfix-reports/run-{N-1}-bugfix.md` (Run N+1)
+4. Agent writes `tickets/{TICKET_ID}/test-reports/run-{N}-report.md`
+
+5. **Extract Coverage Metrics from TEST_REPORT.md:**
+
+   Read from "Coverage Report → Class Level" section:
+   ```
+   Service Layer Coverage:    {X}% (target: ≥90%)
+   Controller Layer Coverage: {Y}% (target: ≥100%)
+   Overall Coverage:          {Z}% (target: ≥85%)
+   ```
+
+6. **Coverage Threshold Evaluation:**
+
+   ```python
+   service_ok = service_coverage >= 90
+   controller_ok = controller_coverage >= 100
+   overall_ok = overall_coverage >= 85
+   all_ok = service_ok AND controller_ok AND overall_ok
+   
+   if not all_ok AND attempt_count < 3:
+       # Retry: inform human and re-run Unit Test Agent
+       attempt_count += 1
+       Log: COVERAGE_RETRY_{attempt_count}
+       Go back to Step 2 (invoke Unit Test Agent again)
+   elif not all_ok AND attempt_count == 3:
+       # Max retries reached, proceed with warning
+       Log: COVERAGE_BELOW_THRESHOLD_MAX_ATTEMPTS
+       Present Checkpoint H with ⚠️ flag
+   else:
+       # Coverage OK, proceed
+       Log: COVERAGE_THRESHOLDS_MET
+       Present Checkpoint H
+   ```
+
+7. **Present Checkpoint H-{N}:**
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔵 CHECKPOINT C-{N} — Unit Test Agent completed (Loop Run {N})
-Ticket: {TICKET_ID}  |  Time: {TIMESTAMP}
+🔵 CHECKPOINT H-{N} — Unit Test Agent (Loop Run {N})
+Ticket: {TICKET_ID}  |  Attempt: {attempt_count}/{max_coverage_attempts}  |  Time: {TIMESTAMP}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📄 ARTIFACT: tickets/{TICKET_ID}/test-reports/run-{N}-report.md
 
 SUMMARY:
 Passed: {X} | Failed: {Y} | Skipped: {Z}
-Coverage: {line%} line / {branch%} branch
 Build: {PASSED/FAILED/BUILD ERROR}
+
+📊 COVERAGE REPORT:
+
+| Layer      | Coverage | Target | Status |
+|---|---|---|---|
+| Service    | {X}%     | ≥90%   | {✅/⚠️} |
+| Controller | {Y}%     | ≥100%  | {✅/⚠️} |
+| Overall    | {Z}%     | ≥85%   | {✅/⚠️} |
 
 ⚠️ FLAGS:
 {Failed tests list, coverage gaps, build errors}
 
-If tests failed or build errors occurred, it's critical to address these before proceeding to code review.
+If tests failed or build errors occurred, it's critical to address these before proceeding.
 
 ─────────────────────────────────────────────────────
-DECISION LOGIC (STRICT ORDER):
-Conditions MUST be evaluated in order and are mutually exclusive.
-────────────────────────────────────────
- 
-1. IF any CRITICAL or HIGH issues exist:
-   RESPOND WITH:
-     REJECT           → Re-run Unit Test Agent
-     REVISE: {notes}  → Fix critical issues
-     DONE             → Exit loop
- 
-   (APPROVE MUST NOT be shown or accepted)
- 
-────────────────────────────────────────
- 
-2. ELSE IF Build = FAILED:
-   RESPOND WITH:
-     REJECT           → Re-run Unit Test Agent
-     REVISE: {notes}  → Fix build issues
-     DONE             → Exit loop
- 
-   (APPROVE MUST NOT be shown or accepted)
- 
-────────────────────────────────────────
- 
-3. ELSE IF Build = PASSED AND Failed tests > 0:
-   RESPOND WITH:
-     APPROVE          → Continue (accept known failures)
-     REVISE: {notes}  → Fix tests
-     REJECT           → Re-run tests
-     DONE             → Exit loop (NOT allowed if BUILD FAILED or CRITICAL issues exist)
- 
-────────────────────────────────────────
- 
-4. ELSE (Build = PASSED AND Failed tests = 0):
-   RESPOND WITH:
-     APPROVE          → Proceed to Code Review
- ```
 
-5. On APPROVE: proceed to Step 3b.
-6. On DONE: go to Loop Exit.
+IF Coverage BELOW Threshold AND Attempt < 3:
+  ⚡ Coverage below target. Will retry Unit Test Agent automatically.
+  
+  RESPOND WITH:
+    APPROVE          → Skip coverage check, proceed to Bugfix
+    REVISE: {notes}  → Retry with specific instructions
+    /skip-coverage   → Acknowledge and proceed (override threshold)
+
+ELSE (Coverage OK OR Attempt = 3):
+  ✅ Coverage check complete. Ready to proceed.
+  
+  RESPOND WITH:
+    APPROVE           → Proceed to Bugfix Agent
+    REJECT            → Re-run Unit Test Agent manually
+    /skip-coverage    → Override coverage threshold
+    DONE              → Exit loop
+─────────────────────────────────────────────────────
+```
+
+8. **Handle Response:**
+
+   - **APPROVE** (if coverage below):
+      - If attempt < 3: Auto-retry Unit Test Agent (increment attempt_count, go to step 2)
+      - If attempt = 3: Log warning, proceed to Bugfix
+
+   - **APPROVE** (if coverage OK):
+      - Log: COVERAGE_THRESHOLDS_MET
+      - Proceed to Step 3b (Bugfix Agent)
+
+   - **REVISE**:
+      - If attempt < 3: Retry with human notes
+      - If attempt = 3: Proceed to Bugfix with notes logged
+
+   - **/skip-coverage** (override):
+      - Log: COVERAGE_THRESHOLD_OVERRIDE
+      - Proceed to Bugfix
+
+   - **REJECT**:
+      - Re-run Unit Test Agent (reset attempt_count)
+
+   - **DONE**:
+      - Exit loop
 7. **Commit sub-checkpoint** (only if `git_enabled: true` in `git-context.md`):
 
 Invoke `gitignore-curator.classify_and_propose` against the stage's
@@ -467,11 +537,102 @@ RESPOND WITH:
 
 On `COMMIT` / `EDIT:` → the skill stages the scoped files and commits.
 On `SKIP` → no commit; logged as `COMMIT_SKIPPED`.
+In all cases, advance to the next pipeline step (Step 3b).
+
+
+---
+
+#### Step 3b — Bugfix Agent
+
+1. Invoke Bugfix Agent with:
+   - `TICKET_ID = {id}`
+   - `RUN_NUMBER = {N}`
+2. Agent runs `/analyze` — produces fix plan
+3. **Orchestrator presents fix plan to human before `/approve`:**
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 BUGFIX PLAN — {TICKET_ID} — Run {N}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{Bugfix Agent's /analyze output}
+
+─────────────────────────────────────────────────────
+RESPOND WITH:
+  /approve         → Apply all automatable fixes
+  SKIP #{N}        → Skip a specific fix (provide reason)
+  DONE             → Exit loop without fixing
+─────────────────────────────────────────────────────
+```
+
+4. On `/approve`: orchestrator sends `/approve` to Bugfix Agent
+5. **Config guard intercept:** If Bugfix Agent requests any config change,
+   orchestrator runs config-permission flow before allowing.
+6. Agent writes `tickets/{TICKET_ID}/bugfix-reports/run-{N}-bugfix.md`
+7. Run: `loop_tracker.register_resolved_issues(ticket_id, N, resolved_fingerprints)`
+8. Present **Checkpoint F-{N}**:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔵 CHECKPOINT F-{N} — Bugfix Agent completed (Loop Run {N})
+Ticket: {TICKET_ID}  |  Time: {TIMESTAMP}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📄 ARTIFACT: tickets/{TICKET_ID}/bugfix-reports/run-{N}-bugfix.md
+
+SUMMARY:
+Fixes applied: {X} | Fixes escalated: {Y}
+Test delta: +{fixed} passed / -{newly failing} newly failing
+Build after fixes: {PASSED / FAILED}
+
+⚠️ FLAGS:
+{Escalated fixes, denied config changes, anything requiring manual dev work}
+
+{loop_tracker.get_loop_summary(ticket_id)}
+
+─────────────────────────────────────────────────────
+RESPOND WITH:
+  APPROVE          → Run loop again (Run {N+1})
+  DONE             → Exit loop — ticket complete
+  REVISE: {notes}  → Continue with specific focus for next run
+─────────────────────────────────────────────────────
+```
+
+9. On APPROVE: increment run, go back to Loop Start.
+10. On DONE: go to Loop Exit.
+11. **Commit sub-checkpoint** (only if `git_enabled: true` in `git-context.md`):
+
+Invoke `gitignore-curator.classify_and_propose` against the stage's
+candidate file list. If it surfaces flagged files, run that sub-checkpoint
+first and apply the human's IGNORE / STAGE / SKIP decisions before
+continuing.
+
+Then invoke `git-branch-manager.commit_stage` with `STAGE_LABEL = bugfix-run-{N}`.
+The skill presents:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💾 COMMIT? — {TICKET_ID} — Stage: {STAGE_LABEL}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Branch : {BRANCH_NAME}
+Files  : {scoped list from stage artifact}
+Proposed message:
+  fix: {short} -- {TICKET_ID}
+─────────────────────────────────────────────────────
+RESPOND WITH:
+  COMMIT             → Commit with proposed message
+  EDIT: {full msg}   → Commit with your message instead
+  SKIP               → Skip commit for this stage
+  GIT STATUS         → Show working tree status first
+─────────────────────────────────────────────────────
+```
+
+On `COMMIT` / `EDIT:` → the skill stages the scoped files and commits.
+On `SKIP` → no commit; logged as `COMMIT_SKIPPED`.
 In all cases, advance to the next pipeline step.
 
 ---
 
-#### Step 3b — Code Review Agent
+#### Step 3c — Code Review Agent
 
 1. Invoke Code Review Agent with:
    - `TICKET_ID = {id}`
@@ -527,96 +688,6 @@ Branch : {BRANCH_NAME}
 Files  : {scoped list from stage artifact}
 Proposed message:
   docs: {short} -- {TICKET_ID}
-─────────────────────────────────────────────────────
-RESPOND WITH:
-  COMMIT             → Commit with proposed message
-  EDIT: {full msg}   → Commit with your message instead
-  SKIP               → Skip commit for this stage
-  GIT STATUS         → Show working tree status first
-─────────────────────────────────────────────────────
-```
-
-On `COMMIT` / `EDIT:` → the skill stages the scoped files and commits.
-On `SKIP` → no commit; logged as `COMMIT_SKIPPED`.
-In all cases, advance to the next pipeline step.
-
----
-
-#### Step 3c — Bugfix Agent
-
-1. Invoke Bugfix Agent with:
-   - `TICKET_ID = {id}`
-   - `RUN_NUMBER = {N}`
-2. Agent runs `/analyze` — produces fix plan
-3. **Orchestrator presents fix plan to human before `/approve`:**
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔧 BUGFIX PLAN — {TICKET_ID} — Run {N}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{Bugfix Agent's /analyze output}
-
-─────────────────────────────────────────────────────
-RESPOND WITH:
-  /approve         → Apply all automatable fixes
-  SKIP #{N}        → Skip a specific fix (provide reason)
-  DONE             → Exit loop without fixing
-─────────────────────────────────────────────────────
-```
-
-4. On `/approve`: orchestrator sends `/approve` to Bugfix Agent
-5. **Config guard intercept:** If Bugfix Agent requests any config change,
-   orchestrator runs config-permission flow before allowing.
-6. Agent writes `tickets/{TICKET_ID}/bugfix-reports/run-{N}-bugfix.md`
-7. Run: `loop_tracker.register_resolved_issues(ticket_id, N, resolved_fingerprints)`
-8. Present **Checkpoint E-{N}**:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔵 CHECKPOINT E-{N} — Bugfix Agent completed (Loop Run {N})
-Ticket: {TICKET_ID}  |  Time: {TIMESTAMP}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📄 ARTIFACT: tickets/{TICKET_ID}/bugfix-reports/run-{N}-bugfix.md
-
-SUMMARY:
-Fixes applied: {X} | Fixes escalated: {Y}
-Test delta: +{fixed} passed / -{newly failing} newly failing
-Build after fixes: {PASSED / FAILED}
-
-⚠️ FLAGS:
-{Escalated fixes, denied config changes, anything requiring manual dev work}
-
-{loop_tracker.get_loop_summary(ticket_id)}
-
-─────────────────────────────────────────────────────
-RESPOND WITH:
-  APPROVE          → Run loop again (Run {N+1})
-  DONE             → Exit loop — ticket complete
-  REVISE: {notes}  → Continue with specific focus for next run
-─────────────────────────────────────────────────────
-```
-
-9. On APPROVE: increment run, go back to Loop Start.
-10. On DONE: go to Loop Exit.
-11. **Commit sub-checkpoint** (only if `git_enabled: true` in `git-context.md`):
-
-Invoke `gitignore-curator.classify_and_propose` against the stage's
-candidate file list. If it surfaces flagged files, run that sub-checkpoint
-first and apply the human's IGNORE / STAGE / SKIP decisions before
-continuing.
-
-Then invoke `git-branch-manager.commit_stage` with `STAGE_LABEL = bugfix-run-{N}`.
-The skill presents:
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💾 COMMIT? — {TICKET_ID} — Stage: {STAGE_LABEL}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Branch : {BRANCH_NAME}
-Files  : {scoped list from stage artifact}
-Proposed message:
-  fix: {short} -- {TICKET_ID}
 ─────────────────────────────────────────────────────
 RESPOND WITH:
   COMMIT             → Commit with proposed message
@@ -779,8 +850,8 @@ On ABORT:
 | 1 | Architecture Design Agent | `/ticket-architect` → `/approve` |
 | 2 | Backend Implementation Agent | `/audit` → `/generate` → `/approve` |
 | 3a | Unit Test Agent | Invoked directly (no command needed — auto-detects mode) |
-| 3b | Code Review Agent | Invoked directly (scoped to files-changed.md automatically) |
-| 3c | Bugfix Agent | `/analyze` → (human reviews plan) → `/approve` |
+| 3b | Bugfix Agent | `/analyze` → (human reviews plan) → `/approve` |
+| 3c | Code Review Agent | Invoked directly (scoped to files-changed.md automatically) |
 | 0.5 | git-branch-manager (skill) | `setup_branch` |
 | post-each-stage | gitignore-curator (skill) → git-branch-manager (skill) | `classify_and_propose` → `commit_stage` |
 | on demand | git-branch-manager (skill) | `push_branch` / `report_status` |

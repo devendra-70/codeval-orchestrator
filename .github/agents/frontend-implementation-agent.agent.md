@@ -48,6 +48,12 @@ frontend/
 
 ---
 
+## Inherited Behaviours
+
+- **`context-reader.behaviour.md`** — Read ticket context, API contracts, and project standards before implementing frontend
+- **`config-permission.behaviour.md`** — Gate all config file changes (package.json, .env, webpack configs, etc.) through orchestrator approval
+
+---
 # 📂 PROJECT STRUCTURE (MANDATORY)
 
 frontend/

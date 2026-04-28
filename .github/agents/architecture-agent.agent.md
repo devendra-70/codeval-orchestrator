@@ -38,6 +38,12 @@ Never mix responsibilities.
  
 ---
 
+## Inherited Behaviours
+
+- **`context-reader.behaviour.md`** — Read ticket context, global architecture, and project standards before designing
+
+---
+
 ## Input
 You will receive:
 - A system flow description or diagram (in text form)
@@ -63,7 +69,7 @@ flowchart LR
     Client --> API_Gateway
     API_Gateway --> Service
     Service --> DB
- 
+ ```
 ---
  
 ## Output Requirements

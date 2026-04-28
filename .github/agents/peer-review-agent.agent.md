@@ -42,6 +42,13 @@ Do **not** re-review unchanged code. Always scope analysis to the MR diff.
 
 ---
 
+## Inherited Behaviours
+
+- **`context-reader.behaviour.md`** — Read ticket context, implementation files, test reports, and project coding standards before review
+- **`log-writer.behaviour.md`** — Log review summary to master-agent-log
+
+---
+
 ## Review Dimensions
 
 ### 1. Code Smells

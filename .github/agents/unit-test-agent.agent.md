@@ -40,6 +40,13 @@ The agent is strictly **NON-INTRUSIVE** and never modifies production code.
 
 ---
 
+## Inherited Behaviours
+
+- **`context-reader.behaviour.md`** — Read ticket context, implementation files, and project standards before generating tests
+- **`log-writer.behaviour.md`** — Log test execution summary to master-agent-log
+
+---
+
 ## Tech Stack
 
 * Java + Spring Boot

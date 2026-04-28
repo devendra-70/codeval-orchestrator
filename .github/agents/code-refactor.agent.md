@@ -51,6 +51,13 @@ empty — record the missing-input error in `REFACTOR_REPORT.md` and halt.
 
 ---
 
+## Inherited Behaviours
+
+- **`context-reader.behaviour.md`** — Read project standards, code-review-report.md, TEST_REPORT.md, and existing source files before refactoring
+- **`log-writer.behaviour.md`** — Log refactoring plan and execution to master-agent-log and REFACTOR_REPORT.md
+
+---
+
 ## Phase 0 — Input Validation & Planning
 
 ### Step 1 — Verify prerequisite files exist
